@@ -73,13 +73,19 @@ static void stop_execve_hook();
 static void stop_input_hook();
 
 #ifdef KSU_KPROBES_HOOK
+#ifndef CONFIG_KSU_SUSFS
 static struct work_struct __maybe_unused stop_vfs_read_work;
 static struct work_struct __maybe_unused stop_execve_hook_work;
 static struct work_struct __maybe_unused stop_input_hook_work;
+#endif // #ifndef CONFIG_KSU_SUSFS
 #else
 bool ksu_vfs_read_hook __read_mostly = true;
-bool ksu_input_hook __read_mostly = true;
+#ifdef CONFIG_KSU_SUSFS
+bool ksu_init_rc_hook __read_mostly = true;
+#endif // #ifdef CONFIG_KSU_SUSFS
 #endif
+bool ksu_input_hook __read_mostly = true;
+
 bool ksu_execveat_hook __read_mostly = true;
 
 u32 ksu_file_sid;
@@ -139,6 +145,7 @@ void on_boot_completed(void)
     ksu_avc_spoof_late_init();
 }
 
+#ifndef CONFIG_KSU_SUSFS
 #define MAX_ARG_STRINGS 0x7FFFFFFF
 struct user_arg_ptr {
 #ifdef CONFIG_COMPAT
@@ -151,6 +158,7 @@ struct user_arg_ptr {
 #endif
 	} ptr;
 };
+#endif // #ifndef CONFIG_KSU_SUSFS
 
 static const char __user *get_user_arg_ptr(struct user_arg_ptr argv, int nr)
 {
@@ -396,6 +404,10 @@ static bool check_argv(struct user_arg_ptr argv, int index,
 	return !strcmp(buf, expected);
 }
 
+#ifdef CONFIG_KSU_SUSFS
+extern int ksu_handle_execveat_init(struct filename *filename);
+#endif // #ifdef CONFIG_KSU_SUSFS
+
 // IMPORTANT NOTE: the call from execve_handler_pre WON'T provided correct value for envp and flags in GKI version
 int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 				struct user_arg_ptr *argv,
@@ -500,6 +512,11 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 			stop_execve_hook();
 		}
 	}
+
+#ifdef CONFIG_KSU_SUSFS
+    // - We need to run ksu_handle_execveat_init() at the very end in case the above checks are skipped
+    (void)ksu_handle_execveat_init(filename);
+#endif // #ifdef CONFIG_KSU_SUSFS
 
 	return 0;
 }
@@ -704,9 +721,11 @@ int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code,
 					int *value)
 {
 #ifndef KSU_KPROBES_HOOK
+//#ifdef CONFIG_KSU_SUSFS
 	if (!ksu_input_hook) {
 		return 0;
 	}
+//#endif // #ifdef CONFIG_KSU_SUSFS
 #endif
 	if (*type == EV_KEY && *code == KEY_VOLUMEDOWN) {
 		int val = *value;
@@ -747,6 +766,7 @@ bool ksu_is_safe_mode()
 
 #ifdef KSU_KPROBES_HOOK
 
+#ifndef CONFIG_KSU_SUSFS
 static int sys_execve_handler_pre(struct kprobe *p, struct pt_regs *regs)
 {
 	struct pt_regs *real_regs = PT_REAL_REGS(regs);
@@ -829,6 +849,7 @@ static void do_stop_input_hook(struct work_struct *work)
 {
 	unregister_kprobe(&input_event_kp);
 }
+#endif // #ifndef CONFIG_KSU_SUSFS
 #else
 static int ksu_execve_ksud_common(const char __user *filename_user,
 				  struct user_arg_ptr *argv)
@@ -889,11 +910,30 @@ static void stop_vfs_read_hook()
 #endif
 }
 
+#if 0 //ifdef CONFIG_KSU_SUSFS - Not Implemented
+void ksu_handle_sys_newfstatat(int fd, loff_t *kstat_size_ptr) {
+    loff_t new_size = *kstat_size_ptr + ksu_rc_len;
+    struct file *file = fget(fd);
+
+    if (!file)
+        return;
+
+    if (is_init_rc(file)) {
+        pr_info("stat init.rc");
+        pr_info("adding ksu_rc_len: %lld -> %lld", *kstat_size_ptr, new_size);
+        *kstat_size_ptr = new_size;
+    }
+    fput(file);
+}
+#endif // #ifdef CONFIG_KSU_SUSFS
+
 static void stop_execve_hook()
 {
 #ifdef KSU_KPROBES_HOOK
+#ifndef CONFIG_KSU_SUSFS
 	bool ret = schedule_work(&stop_execve_hook_work);
 	pr_info("unregister execve kprobe: %d!\n", ret);
+#endif // #ifndef CONFIG_KSU_SUSFS
 #else
 	pr_info("stop execve_hook\n");
 	ksu_execveat_hook = false;
@@ -908,8 +948,10 @@ static void stop_input_hook()
 		return;
 	}
 	input_hook_stopped = true;
+#ifndef CONFIG_KSU_SUSFS
 	bool ret = schedule_work(&stop_input_hook_work);
 	pr_info("unregister input kprobe: %d!\n", ret);
+#endif // #ifndef CONFIG_KSU_SUSFS
 #else
 	if (!ksu_input_hook) {
 		return;
@@ -919,11 +961,11 @@ static void stop_input_hook()
 #endif
 }
 
-
 // ksud: module support
 void ksu_ksud_init()
 {
 #ifdef KSU_KPROBES_HOOK
+#ifndef CONFIG_KSU_SUSFS
 	int ret;
 
 	ret = register_kprobe(&execve_kp);
@@ -938,15 +980,18 @@ void ksu_ksud_init()
 	INIT_WORK(&stop_vfs_read_work, do_stop_vfs_read_hook);
 	INIT_WORK(&stop_execve_hook_work, do_stop_execve_hook);
 	INIT_WORK(&stop_input_hook_work, do_stop_input_hook);
+#endif // #ifndef CONFIG_KSU_SUSFS
 #endif
 }
 
 void ksu_ksud_exit()
 {
 #ifdef KSU_KPROBES_HOOK
+#ifndef CONFIG_KSU_SUSFS
 	unregister_kprobe(&execve_kp);
 	// this should be done before unregister vfs_read_kp
 	// unregister_kprobe(&vfs_read_kp);
 	unregister_kprobe(&input_event_kp);
+#endif // #ifndef CONFIG_KSU_SUSFS
 #endif
 }

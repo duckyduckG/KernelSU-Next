@@ -98,7 +98,11 @@ static int ksu_task_fix_setuid(struct cred *new, const struct cred *old,
 #define DEVPTS_SUPER_MAGIC	0x1cd1
 #endif
 
+#ifndef CONFIG_KSU_SUSFS
 extern int __ksu_handle_devpts(struct inode *inode); // sucompat.c
+#else
+extern int ksu_handle_devpts(struct inode *inode); // sucompat.c
+#endif
 
 #ifdef CONFIG_COMPAT
 bool ksu_is_compat __read_mostly = false;
@@ -109,7 +113,11 @@ int ksu_inode_permission(struct inode *inode, int mask)
 	if (inode && inode->i_sb 
 		&& unlikely(inode->i_sb->s_magic == DEVPTS_SUPER_MAGIC)) {
 		//pr_info("%s: handling devpts for: %s \n", __func__, current->comm);
+#ifndef CONFIG_KSU_SUSFS
 		__ksu_handle_devpts(inode);
+#else
+		ksu_handle_devpts(inode);
+#endif
 	}
 	return 0;
 }

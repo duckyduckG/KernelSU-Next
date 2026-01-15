@@ -24,7 +24,9 @@
 #include "selinux/selinux.h"
 #include "allowlist.h"
 #include "manager.h"
+#ifndef CONFIG_KSU_SUSFS
 #include "syscall_hook_manager.h"
+#endif // #ifndef CONFIG_KSU_SUSFS
 #include "su_mount_ns.h"
 #include "kernel_compat.h"
 
@@ -268,8 +270,10 @@ out:
 	if (persist) {
 		persistent_allow_list();
 #ifdef KSU_KPROBES_HOOK
+#ifndef CONFIG_KSU_SUSFS
 		// FIXME: use a new flag
 		ksu_mark_running_process();
+#endif // #ifndef CONFIG_KSU_SUSFS
 #endif
 	}
 
